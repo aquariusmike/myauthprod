@@ -3,60 +3,40 @@ import session from "express-session";
 import passport from "passport";
 import dotenv from "dotenv";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
-import flash from "connect-flash"; // <-- Import connect-flash
+import flash from "connect-flash";
+import MongoStore from "connect-mongo"; // <-- REQUIRED FOR PRODUCTION SESSIONS
 
 dotenv.config();
 
 const app = express();
 
-// Session Middleware
+// -----------------------
+// 1. MIDDLEWARE
+// -----------------------
+
+// Session Middleware (Configured with MongoStore for Production Stability)
 app.use(
   session({
     // --- PRODUCTION SESSION STORE ---
     store: MongoStore.create({
-      mongoUrl: process.env.MONGO_URI, // Use the MongoDB connection string
+      mongoUrl: process.env.MONGO_URI, // Requires the MONGO_URI ENV variable
       ttl: 14 * 24 * 60 * 60, // Session expiration (14 days)
       collectionName: 'sessions',
     }),
     // --------------------------------
-    secret: process.env.SESSION_SECRET,
-    resave: false,
-    saveUninitialized: false,
-  })
-);
-// ... rest of your code
-
-
-
-// Session Middleware
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET,
+    secret: process.env.SESSION_SECRET, // Requires the SESSION_SECRET ENV variable
     resave: false,
     saveUninitialized: false,
   })
 );
 
-// Passport Init
+// Passport and Flash Initialization
 app.use(passport.initialize());
 app.use(passport.session());
-app.use(flash()); // <-- Use flash middleware here
-// ... (rest of the code)
+app.use(flash()); // Required to show unauthorized messages
 
-// Session Middleware
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET,
-    resave: false,
-    saveUninitialized: false,
-  })
-);
-
-// Passport Init
-app.use(passport.initialize());
-app.use(passport.session());
 // -----------------------
-// GOOGLE OAUTH STRATEGY
+// 2. GOOGLE OAUTH STRATEGY
 // -----------------------
 passport.use(
   new GoogleStrategy(
@@ -68,9 +48,9 @@ passport.use(
     async (accessToken, refreshToken, profile, done) => {
       const email = profile.emails[0].value;
 
-      // --- 1. AUTHORIZATION LOGIC ---
-      let role = "general"; // default, but will be rejected if not a student email
-      let isAuthorized = false; // Flag to track access
+      // --- AUTHORIZATION LOGIC ---
+      let role = "general";
+      let isAuthorized = false;
 
       // Condition 1: Official Student Email
       if (email.endsWith("@stu.pathfinder-mm.org")) {
@@ -78,80 +58,75 @@ passport.use(
         isAuthorized = true;
       }
 
-      // Condition 2: Your Personal Gmail Exception
+      // Condition 2: Personal Gmail Exception
       if (email === "avagarimike11@gmail.com") {
         role = "student";
         isAuthorized = true;
       }
 
-      // --- 2. REJECTION STEP ---
+      // --- REJECTION STEP: Deny unauthorized users ---
       if (!isAuthorized) {
-        // Reject the user. The second argument is 'user', which is false here.
-        // This triggers the failureRedirect in the /auth/google/callback route.
-        return done(null, false, { message: "You are not authorized to access this resource." });
+        // Calling done(null, false) triggers failureRedirect and stores the flash message.
+        return done(null, false, { message: "You are not verified student of Pathfinder Institute Myanmar." });
       }
 
-      // --- 3. SUCCESS STEP ---
-      // If the user is authorized, proceed with their profile data.
+      // --- SUCCESS STEP ---
       return done(null, { email, name: profile.displayName, role });
     }
   )
 );
+
 passport.serializeUser((user, done) => done(null, user));
 passport.deserializeUser((obj, done) => done(null, obj));
 
 // -----------------------
-// ROUTES
+// 3. ROUTES
 // -----------------------
 
-// Serve pages
+// Serve static files from the 'public' directory
 app.use(express.static("public"));
 
-// Redirect to Google
+// Redirect to Google for authentication
 app.get(
   "/auth/google",
   passport.authenticate("google", { scope: ["profile", "email"] })
 );
 
-// Google Callback
+// Google Callback (Handles success and failure)
 app.get(
   "/auth/google/callback",
   passport.authenticate("google", {
-    // CHANGE THIS: Redirect failure to a dynamic route
-    failureRedirect: "/auth/failure", 
-    failureFlash: true // Keep this enabled
+    failureRedirect: "/auth/failure", // Redirects to our dynamic failure route
+    failureFlash: true // Required to carry the rejection message
   }),
   (req, res) => {
+    // Success: Redirect to dashboard
     res.redirect("/dashboard");
   }
 );
-// Handle Login Failure
+
+// Handle Login Failure: Extracts flash message and redirects to index.html with error
 app.get("/auth/failure", (req, res) => {
-  // 1. Get the flash message (the error from done(null, false, { message: ... }))
   const messages = req.flash("error");
-  const errorMessage = messages.length > 0 
-    ? messages[0] 
+  const errorMessage = messages.length > 0
+    ? messages[0]
     : "Login failed.";
   
-  // 2. Encode the message and redirect to index.html
-  // We use encodeURIComponent to safely pass the message in the URL
+  // Redirect with the error message encoded in a query parameter
   const encodedMessage = encodeURIComponent(errorMessage);
-
-  // Use a redirect to index.html with the error message in a query parameter
   res.redirect(`/index.html?authError=${encodedMessage}`);
 });
 
-// Middleware to protect dashboard
+// Middleware to protect dashboard (Ensure the user is logged in)
 function ensureLoggedIn(req, res, next) {
   if (req.isAuthenticated()) return next();
-  res.redirect("/login.html");
+  res.redirect("/index.html"); // Redirect to index.html if not logged in
 }
 
-// Dashboard route
+// Dashboard route (Renders HTML dynamically based on user role)
 app.get("/dashboard", ensureLoggedIn, (req, res) => {
   const { name, email, role } = req.user;
 
-  // Inject data into HTML (in a simple way)
   res.send(`
     <html>
     <head>
@@ -181,17 +156,16 @@ app.get("/dashboard", ensureLoggedIn, (req, res) => {
   `);
 });
 
-// Logout
+// Logout route
 app.get("/logout", (req, res) => {
   req.logout((err) => {
     if (err) {
-      // Handle error if logout fails
       console.error("Logout Error:", err);
-      return res.redirect("/"); 
+      return res.redirect("/");
     }
-    
+
     req.session.destroy(() => {
-      // CHANGE THIS: Redirect after successful logout to index.html
+      // Successful logout: Redirect to index.html
       res.redirect("/index.html");
     });
   });
