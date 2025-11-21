@@ -1,4 +1,4 @@
-// server.js (FULLY ES MODULE COMPATIBLE FIX)
+// server.js (FULLY ES MODULE COMPATIBLE, Production Ready Fix)
 import express from "express";
 import session from "express-session";
 import passport from "passport";
@@ -7,13 +7,20 @@ import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import flash from "connect-flash";
 import path from "path";
 import { createClient } from "redis";
-
-// 👇 FIX: Use curly braces for named import
+// FIX: Use curly braces for named import (required for connect-redis v7+ in ESM)
 import { RedisStore } from "connect-redis"; 
 
 dotenv.config();
 
 const app = express();
+
+// ----------------------------------------------------
+// ✅ FIX 1: TRUST PROXY
+// Required when deploying to platforms like Vercel/Render, 
+// which sit behind a proxy/load balancer. This allows Express 
+// to correctly read the HTTPS headers for secure cookies.
+app.set('trust proxy', 1); 
+// ----------------------------------------------------
 
 // -----------------------
 // REDIS CLIENT SETUP
@@ -22,7 +29,7 @@ let redisClient;
 let sessionStore;
 
 if (process.env.KV_URL) {
-  // Production: Use Redis (Vercel KV / Upstash)
+  // Production: Use Redis (Vercel KV / Upstash / other hosted Redis)
   redisClient = createClient({
     url: process.env.KV_URL,
   });
@@ -30,9 +37,10 @@ if (process.env.KV_URL) {
   redisClient.on("error", (err) => console.error("Redis Client Error", err));
   redisClient.on("connect", () => console.log("✅ Redis Connected"));
 
+  // Connect the Redis client
   redisClient.connect().catch(console.error);
 
-  // Initialize store using the imported Class
+  // Initialize store using the imported RedisStore Class
   sessionStore = new RedisStore({
     client: redisClient,
     prefix: "sess:",
@@ -41,7 +49,7 @@ if (process.env.KV_URL) {
 
   console.log("✅ Using Redis session store (production)");
 } else {
-  // Development: Use memory store (not for production!)
+  // Development: Use memory store (WARNING: Not for production!)
   sessionStore = undefined;
   console.log("⚠️ Using in-memory sessions (development only)");
 }
@@ -57,11 +65,13 @@ app.use(
     secret: process.env.SESSION_SECRET || "change-this-secret",
     resave: false,
     saveUninitialized: false,
-    rolling: true, // reset session expiration on activity
+    rolling: true, 
     cookie: {
-      secure: process.env.NODE_ENV === "production", // HTTPS in production
+      // ✅ FIX 2: Correctly sets secure flag based on trusted proxy header
+      // It checks if the environment is NOT development OR if the connection is HTTPS
+      secure: process.env.NODE_ENV === "production" && app.get('env') !== 'development', 
       httpOnly: true,
-      maxAge: 14 * 24 * 60 * 60 * 1000, // 14 days
+      maxAge: 14 * 24 * 60 * 60 * 1000, 
     },
   })
 );
@@ -78,7 +88,8 @@ passport.use(
     {
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      callbackURL: `${process.env.BASE_URL}/auth/google/callback`,
+      // BASE_URL must be set to your production domain (e.g., https://myauthprouction.vercel.app)
+      callbackURL: `${process.env.BASE_URL}/auth/google/callback`, 
     },
     async (accessToken, refreshToken, profile, done) => {
       try {
@@ -86,11 +97,13 @@ passport.use(
         let role = "general";
         let isAuthorized = false;
 
+        // Custom Authorization Logic
         if (email.endsWith("@stu.pathfinder-mm.org")) {
           role = "student";
           isAuthorized = true;
         }
 
+        // Hardcoded student/admin (for testing/special access)
         if (email === "avagarimike11@gmail.com") {
           role = "student";
           isAuthorized = true;
