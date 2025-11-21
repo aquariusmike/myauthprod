@@ -29,13 +29,14 @@
 </div>
 
 <script>
-fetch("/session-info")
+fetch("/api/session-info")  <!-- ← FIXED -->
     .then(res => res.json())
     .then(data => {
         if (!data.loggedIn) {
             location.href = "/login";
             return;
         }
+
         document.getElementById("email").innerText = data.email;
 
         if (data.email.includes("stu")) {
@@ -43,6 +44,10 @@ fetch("/session-info")
         } else {
             document.getElementById("normalDiv").classList.remove("hidden");
         }
+    })
+    .catch(err => {
+        console.error("Session check failed:", err);
+        location.href = "/index.html";
     });
 </script>
 
