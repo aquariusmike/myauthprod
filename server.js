@@ -3,6 +3,7 @@ import session from "express-session";
 import passport from "passport";
 import dotenv from "dotenv";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
+import flash from "connect-flash"; // <-- Import connect-flash
 
 dotenv.config();
 
@@ -20,7 +21,21 @@ app.use(
 // Passport Init
 app.use(passport.initialize());
 app.use(passport.session());
+app.use(flash()); // <-- Use flash middleware here
+// ... (rest of the code)
 
+// Session Middleware
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+  })
+);
+
+// Passport Init
+app.use(passport.initialize());
+app.use(passport.session());
 // -----------------------
 // GOOGLE OAUTH STRATEGY
 // -----------------------
@@ -34,23 +49,35 @@ passport.use(
     async (accessToken, refreshToken, profile, done) => {
       const email = profile.emails[0].value;
 
-      // --- ROLE LOGIC ---
-      let role = "general"; // default for normal gmail
+      // --- 1. AUTHORIZATION LOGIC ---
+      let role = "general"; // default, but will be rejected if not a student email
+      let isAuthorized = false; // Flag to track access
 
+      // Condition 1: Official Student Email
       if (email.endsWith("@stu.pathfinder-mm.org")) {
         role = "student";
+        isAuthorized = true;
       }
 
-      // exception: allow your personal gmail as student
+      // Condition 2: Your Personal Gmail Exception
       if (email === "avagarimike11@gmail.com") {
         role = "student";
+        isAuthorized = true;
       }
 
+      // --- 2. REJECTION STEP ---
+      if (!isAuthorized) {
+        // Reject the user. The second argument is 'user', which is false here.
+        // This triggers the failureRedirect in the /auth/google/callback route.
+        return done(null, false, { message: "You are not authorized to access this resource." });
+      }
+
+      // --- 3. SUCCESS STEP ---
+      // If the user is authorized, proceed with their profile data.
       return done(null, { email, name: profile.displayName, role });
     }
   )
 );
-
 passport.serializeUser((user, done) => done(null, user));
 passport.deserializeUser((obj, done) => done(null, obj));
 
@@ -71,12 +98,29 @@ app.get(
 app.get(
   "/auth/google/callback",
   passport.authenticate("google", {
-    failureRedirect: "/login.html",
+    // CHANGE THIS: Redirect failure to a dynamic route
+    failureRedirect: "/auth/failure", 
+    failureFlash: true // Keep this enabled
   }),
   (req, res) => {
     res.redirect("/dashboard");
   }
 );
+// Handle Login Failure
+app.get("/auth/failure", (req, res) => {
+  // 1. Get the flash message (the error from done(null, false, { message: ... }))
+  const messages = req.flash("error");
+  const errorMessage = messages.length > 0 
+    ? messages[0] 
+    : "Login failed.";
+  
+  // 2. Encode the message and redirect to index.html
+  // We use encodeURIComponent to safely pass the message in the URL
+  const encodedMessage = encodeURIComponent(errorMessage);
+
+  // Use a redirect to index.html with the error message in a query parameter
+  res.redirect(`/index.html?authError=${encodedMessage}`);
+});
 
 // Middleware to protect dashboard
 function ensureLoggedIn(req, res, next) {

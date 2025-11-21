@@ -35,15 +35,32 @@
 </head>
 <body>
   <div class="box">
-    <h2>School Login</h2>
+    <h2>Welcome to Pathfinder Institute Myanmar <br>School Login</h2>
     <p>Only @stu.pathfinder-mm.org allowed</p>
 
     <a href="/auth/google">
       <button>Sign in with Google</button>
     </a>
+ 
+    
+    <p id="authErrorMessage" style="color: red; font-weight: bold;"></p>
   </div>
   <footer style="position: fixed; bottom: 10px; font-size: 12px; color: #888;">
     &copy; Made By Mike Frost with ❤️
   </footer>
+
+
+  <script>
+    // Get the query parameters from the URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const authError = urlParams.get('authError');
+
+    if (authError) {
+        // Decode and display the error message
+        const decodedMessage = decodeURIComponent(authError);
+        document.getElementById('authErrorMessage').innerText = `You are not verified student of Pathfinder Institute Myanmar. (${decodedMessage})`;
+    }
+</script>
 </body>
+<
 </html>
