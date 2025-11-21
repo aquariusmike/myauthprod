@@ -4,14 +4,41 @@ import passport from "passport";
 import dotenv from "dotenv";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import flash from "connect-flash";
-import MongoStore from "connect-mongo";
 import path from "path";
 import https from "https";
 import fs from "fs";
+import pgSession from "connect-pg-simple";
+import pg from "pg";
 
 dotenv.config();
 
 const app = express();
+
+// -----------------------
+// POSTGRES SESSION STORE (for Vercel Postgres)
+// -----------------------
+let sessionStore;
+
+if (process.env.POSTGRES_URL) {
+  // Production: Use Vercel Postgres
+  const PgStore = pgSession(session);
+  const pgPool = new pg.Pool({
+    connectionString: process.env.POSTGRES_URL,
+    ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
+  });
+
+  sessionStore = new PgStore({
+    pool: pgPool,
+    tableName: "session", // Default table name
+    createTableIfMissing: true, // Auto-create session table
+  });
+
+  console.log("✅ Using Postgres session store (Vercel Postgres)");
+} else {
+  // Development: No store (will use memory)
+  sessionStore = undefined;
+  console.log("⚠️  Using in-memory sessions (development only)");
+}
 
 // -----------------------
 // HTTPS CONFIGURATION (Optional for Production)
@@ -31,21 +58,11 @@ const sslOptions = {
 // Serve static files from 'public'
 app.use(express.static(path.join(process.cwd(), "public")));
 
-// Session Middleware (MongoStore for Production)
+// Session Middleware
 app.use(
   session({
-    store: MongoStore.create({
-      mongoUrl: process.env.MONGO_URI,
-      ttl: 14 * 24 * 60 * 60, // 14 days
-      collectionName: "sessions",
-      touchAfter: 24 * 3600, // Lazy session update
-      autoRemove: "native", // Let MongoDB handle expired sessions
-      mongoOptions: {
-        serverSelectionTimeoutMS: 5000, // Timeout after 5s instead of 30s
-        socketTimeoutMS: 45000,
-      }
-    }),
-    secret: process.env.SESSION_SECRET,
+    store: sessionStore,
+    secret: process.env.SESSION_SECRET || "your-secret-key-change-this",
     resave: false,
     saveUninitialized: false,
     rolling: true, // Reset expiration on activity
@@ -197,6 +214,5 @@ https.createServer(sslOptions, app).listen(PORT, () => {
 
 // Otherwise, HTTP
 app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-  console.log(`MongoDB session store initialized`);
+  console.log(`✅ Server running on http://localhost:${PORT}`);
 });
